@@ -9,12 +9,14 @@ use jsonrpsee::{
 use opentelemetry::trace::FutureExt as _;
 use serde_json::json;
 
-use crate::utils::TypeRegistryRef;
 use crate::{
     config::Config,
-    extensions::server::SubwayServerBuilder,
+    extensions::{
+        rate_limit::{MethodWeights, RateLimitBuilder},
+        server::SubwayServerBuilder,
+    },
     middlewares::{factory, CallRequest, Middlewares, SubscriptionRequest},
-    utils::{errors, telemetry},
+    utils::{errors, telemetry, TypeRegistryRef},
 };
 
 // TODO: https://github.com/paritytech/jsonrpsee/issues/985
@@ -43,11 +45,15 @@ pub async fn build(config: Config) -> anyhow::Result<SubwayServerHandle> {
         .get::<SubwayServerBuilder>()
         .expect("Server extension not found");
 
+    let rate_limit_builder = extensions_registry.read().await.get::<RateLimitBuilder>();
+
+    let rpc_method_weights = MethodWeights::from_config(&config.rpcs.methods);
+
     let request_timeout_seconds = server_builder.config.request_timeout_seconds;
 
     let registry = extensions_registry.clone();
     let (addr, handle) = server_builder
-        .build(move || async move {
+        .build(rate_limit_builder, rpc_method_weights, move || async move {
             let mut module = RpcModule::new(());
 
             let tracer = telemetry::Tracer::new("server");
@@ -95,7 +101,7 @@ pub async fn build(config: Config) -> anyhow::Result<SubwayServerHandle> {
                         match result.as_ref() {
                             Ok(_) => tracer.span_ok(),
                             Err(err) => {
-                                tracer.span_error(format!("{}", err));
+                                tracer.span_error(err);
                             }
                         };
 
@@ -165,7 +171,7 @@ pub async fn build(config: Config) -> anyhow::Result<SubwayServerHandle> {
                                     tracer.span_ok();
                                 }
                                 Err(err) => {
-                                    tracer.span_error(format!("{:?}", err));
+                                    tracer.span_error(&errors::failed(format!("{:?}", err)));
                                 }
                             };
 
@@ -256,6 +262,7 @@ mod tests {
                         cache: None,
                         response: None,
                         delay_ms: None,
+                        rate_limit_weight: 1,
                     },
                     RpcMethod {
                         method: TIMEOUT.to_string(),
@@ -263,6 +270,7 @@ mod tests {
                         cache: None,
                         response: None,
                         delay_ms: None,
+                        rate_limit_weight: 1,
                     },
                     RpcMethod {
                         method: CRAZY.to_string(),
@@ -270,6 +278,7 @@ mod tests {
                         cache: None,
                         response: None,
                         delay_ms: None,
+                        rate_limit_weight: 1,
                     },
                 ],
                 subscriptions: vec![],
