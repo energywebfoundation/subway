@@ -134,10 +134,10 @@ methods:
       size: 1
 
   - method: system_name
-    response: Subway
+    response: EWX Parachain
 
   - method: system_version
-    response: 1.0.0-dev
+    response: 1.0.3
 
   - method: system_chainType
     cache:
